@@ -27,6 +27,9 @@ interface ProfileViewProps {
   onNavigate: (screen: ScreenId) => void;
   onSwitchUser: (userId: string) => void;
   onUpdateProfileName: (newName: string, newClass: string, newSchool: string) => void;
+  isGoogleSignedIn: boolean;
+  onGoogleSignIn: () => void;
+  onGoogleSignOut: () => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
@@ -36,10 +39,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onNavigate,
   onSwitchUser,
   onUpdateProfileName,
+  isGoogleSignedIn,
+  onGoogleSignIn,
+  onGoogleSignOut,
 }) => {
   const [editingProfile, setEditingProfile] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [signedIn, setSignedIn] = useState(true);
 
   const [nameInput, setNameInput] = useState(currentUser.displayName);
   const [classInput, setClassInput] = useState(currentUser.classGrade);
@@ -324,15 +329,26 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         })}
       </div>
 
-      {/* Sign Out / Sign In Button */}
-      <button
-        type="button"
-        onClick={() => setSignedIn((prev) => !prev)}
-        className="w-full py-3.5 px-5 rounded-2xl bg-[#121836] hover:bg-rose-500/15 border border-white/15 hover:border-rose-500/50 text-xs sm:text-sm font-extrabold text-rose-400 flex items-center justify-center gap-2 transition-all"
-      >
-        <LogOut className="w-4 h-4" />
-        <span>{signedIn ? 'Sign Out of Student Account' : 'Sign In as Verified Student'}</span>
-      </button>
+      {/* Sign Out / Sign In Button (Real Firebase Google Auth) */}
+      {isGoogleSignedIn ? (
+        <button
+          type="button"
+          onClick={onGoogleSignOut}
+          className="w-full py-3.5 px-5 rounded-2xl bg-[#121836] hover:bg-rose-500/15 border border-white/15 hover:border-rose-500/50 text-xs sm:text-sm font-extrabold text-rose-400 flex items-center justify-center gap-2 transition-all"
+        >
+          <LogOut className="w-4 h-4" />
+          <span>Sign Out of Google Student Account</span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={onGoogleSignIn}
+          className="w-full py-3.5 px-5 rounded-2xl bg-gradient-to-r from-[#7B3FE4] via-[#2563EB] to-[#00E5FF] hover:brightness-110 text-xs sm:text-sm font-extrabold text-white shadow-[0_0_25px_rgba(0,229,255,0.4)] flex items-center justify-center gap-2 transition-all"
+        >
+          <CheckCircle2 className="w-4 h-4" />
+          <span>Sign In with Google (Enable Live Cloud Sync)</span>
+        </button>
+      )}
     </div>
   );
 };

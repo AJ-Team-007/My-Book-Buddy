@@ -20,6 +20,7 @@ import {
   SVG_BACK_COVER,
   SVG_OPEN_PAGES,
 } from '../data/mockData';
+import { processAndUploadBookImage } from '../firebase';
 import { getConditionBadgeStyle } from './BookCard';
 
 interface BookDetailsViewProps {
@@ -375,19 +376,23 @@ export const SellBookView: React.FC<SellBookViewProps> = ({
   );
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          setPhotos((prev) => [reader.result as string, ...prev]);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+    setUploadingPhoto(true);
+    try {
+      const uploadedUrls: string[] = [];
+      for (const file of Array.from(files).slice(0, 4)) {
+        const url = await processAndUploadBookImage(file);
+        uploadedUrls.push(url);
+      }
+      setPhotos((prev) => [...uploadedUrls, ...prev].slice(0, 5));
+    } finally {
+      setUploadingPhoto(false);
+    }
   };
 
   const handleRemovePhoto = (index: number) => {
@@ -471,7 +476,9 @@ export const SellBookView: React.FC<SellBookViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
             <label className="sm:col-span-5 cursor-pointer rounded-2xl border-2 border-dashed border-[#7B3FE4]/60 hover:border-[#00E5FF] bg-[#121836]/70 p-5 flex flex-col items-center justify-center text-center transition-colors">
               <Upload className="w-7 h-7 text-[#38BDF8] mb-2" />
-              <span className="text-xs font-bold text-white">Upload Book Photos</span>
+              <span className="text-xs font-bold text-white">
+                {uploadingPhoto ? 'Uploading to Firebase Storage...' : 'Upload Book Photos'}
+              </span>
               <span className="text-[11px] text-slate-400 mt-0.5">
                 Add clear photos of your book (Front, Pages, Back)
               </span>

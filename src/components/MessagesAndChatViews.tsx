@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { ChatMessage, Conversation, StudentUser } from '../types';
 import { SVG_OPEN_PAGES } from '../data/mockData';
+import { processAndUploadBookImage } from '../firebase';
 import { getConditionBadgeStyle } from './BookCard';
 
 interface MessagesViewProps {
@@ -193,16 +194,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
     setInputText('');
   };
 
-  const handleAttachPhotoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAttachPhotoFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        onSendMessage('Here is a clear photo of the textbook pages:', reader.result);
-      }
-    };
-    reader.readAsDataURL(file);
+    const uploadedUrl = await processAndUploadBookImage(file);
+    onSendMessage('Here is a clear photo of the textbook pages:', uploadedUrl);
   };
 
   return (

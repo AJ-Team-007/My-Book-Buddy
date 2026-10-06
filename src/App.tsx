@@ -1,4 +1,24 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import {
+  collection,
+  doc,
+  onSnapshot,
+  query,
+  where,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
+  Timestamp,
+} from 'firebase/firestore';
+import {
+  auth,
+  db,
+  signInWithGoogle,
+  signOutUser,
+  handleFirestoreError,
+  OperationType,
+} from './firebase';
 import {
   BookListing,
   BuyRequest,
@@ -48,17 +68,29 @@ const DEFAULT_FILTERS: FilterState = {
   sortBy: 'newest',
 };
 
+function formatTimestampLabel(ts: unknown, fallback = 'Just now'): string {
+  if (ts instanceof Timestamp) {
+    const date = ts.toDate();
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return fallback;
+}
+
 export default function App() {
   const [activeScreen, setActiveScreen] = useState<ScreenId>('home');
   const [viewportMode, setViewportMode] = useState<ViewportMode>('auto');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
-  // Users & Active Student Persona
+  // Firebase Auth State
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [authReady, setAuthReady] = useState<boolean>(false);
+
+  // Users & Active Student Persona (Supports both Google Auth & Science Fair Demo Mode)
   const [usersMap, setUsersMap] = useState<Record<string, StudentUser>>(DEMO_USERS);
   const [currentUserId, setCurrentUserId] = useState<string>('student-a');
   const currentUser = usersMap[currentUserId] || DEMO_USERS['student-a'];
 
-  // Marketplace State
+  // Marketplace State (Merged with Real-time Firestore)
   const [books, setBooks] = useState<BookListing[]>(INITIAL_BOOKS);
   const [favorites, setFavorites] = useState<string[]>(['book-1', 'book-4']);
   const [selectedBookId, setSelectedBookId] = useState<string>('book-1');
@@ -89,6 +121,314 @@ export default function App() {
     }, 4000);
   };
 
+  // 1. Listen to Firebase Authentication State
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      setFirebaseUser(user);
+      setAuthReady(true);
+
+      if (user) {
+        const displayName = user.displayName || 'Jaimin & Aarush (Student A)';
+        const parts = displayName.trim().split(/\s+/);
+        const initials =
+          parts.length >= 2
+            ? `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+            : displayName.slice(0, 2).toUpperCase();
+
+        const studentProfile: StudentUser = {
+          id: user.uid,
+          name: displayName.slice(0, 40),
+          displayName: `${displayName.slice(0, 60)}`,
+          shortRole: 'Verified Google Student',
+          avatarGradient: 'from-[#FF2E93] via-[#7B3FE4] to-[#00E5FF]',
+          initials: initials.slice(0, 4) || 'JA',
+          classGrade: 'Class 12',
+          board: 'CBSE',
+          school: 'Delhi Public Academy • Science Stream',
+          memberSince: 'Jan 2024',
+          verified: true,
+          online: true,
+          bio: 'Verified student on My Book Buddy sharing and requesting school textbooks.',
+        };
+
+        setUsersMap((prev) => ({
+          ...prev,
+          [user.uid]: prev[user.uid] || studentProfile,
+        }));
+        setCurrentUserId(user.uid);
+
+        // Save public profile to /users/{uid} (No PII)
+        try {
+          await setDoc(
+            doc(db, 'users', user.uid),
+            {
+              uid: user.uid,
+              displayName: studentProfile.displayName.slice(0, 100),
+              classGrade: studentProfile.classGrade.slice(0, 40),
+              board: studentProfile.board.slice(0, 40),
+              school: studentProfile.school.slice(0, 120),
+              avatarGradient: studentProfile.avatarGradient.slice(0, 100),
+              initials: studentProfile.initials.slice(0, 6),
+              memberSince: studentProfile.memberSince.slice(0, 40),
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+        }
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  // 2. Real-time Firestore Listeners for Books, Requests, and Conversations
+  useEffect(() => {
+    if (!authReady) return;
+
+    // Books Listener (where isPublic == true satisfies security rule)
+    const booksQuery = query(collection(db, 'books'), where('isPublic', '==', true));
+    const unsubBooks = onSnapshot(
+      booksQuery,
+      (snapshot) => {
+        const cloudBooks: BookListing[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const createdMillis =
+            data.createdAt instanceof Timestamp
+              ? data.createdAt.toMillis()
+              : Date.now();
+          cloudBooks.push({
+            id: docSnap.id,
+            title: String(data.title || ''),
+            author: String(data.author || ''),
+            subject: String(data.subject || 'Physics'),
+            classGrade: String(data.classGrade || 'Class 11'),
+            board: String(data.board || 'CBSE'),
+            medium: data.medium === 'Hindi' ? 'Hindi' : 'English',
+            edition: String(data.edition || '2024 Edition'),
+            condition: data.condition || 'Good',
+            price: Number(data.price) || 200,
+            originalPrice: Number(data.originalPrice) || 400,
+            description: String(data.description || ''),
+            coverImage: String(data.coverImage || ''),
+            galleryImages: Array.isArray(data.galleryImages)
+              ? data.galleryImages
+              : [String(data.coverImage || '')],
+            sellerId: String(data.sellerId || data.ownerUid || 'student-a'),
+            sellerName: String(data.sellerName || 'Student A'),
+            sellerDisplay: String(data.sellerDisplay || 'Jaimin & Aarush (Student A)'),
+            postedTime: formatTimestampLabel(data.createdAt, 'Recently'),
+            createdAt: createdMillis,
+            status: data.status === 'Sold' ? 'Sold' : 'Available',
+            requestsCount: Number(data.requestsCount) || 0,
+          });
+        });
+
+        setBooks(() => {
+          const map = new Map<string, BookListing>();
+          INITIAL_BOOKS.forEach((b) => map.set(b.id, b));
+          cloudBooks.forEach((b) => map.set(b.id, b));
+          return Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+        });
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'books');
+      }
+    );
+
+    // BuyRequests Listener
+    const reqQuery = query(collection(db, 'requests'), where('isPublic', '==', true));
+    const unsubReqs = onSnapshot(
+      reqQuery,
+      (snapshot) => {
+        const cloudReqs: BuyRequest[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const createdMillis =
+            data.createdAt instanceof Timestamp
+              ? data.createdAt.toMillis()
+              : Date.now();
+          cloudReqs.push({
+            id: docSnap.id,
+            bookId: String(data.bookId || 'book-1'),
+            bookTitle: String(data.bookTitle || ''),
+            bookCover: String(data.bookCover || ''),
+            bookPrice: Number(data.bookPrice) || 200,
+            bookCondition: data.bookCondition || 'Good',
+            buyerId: String(data.buyerId || data.buyerUid || 'student-b'),
+            buyerName: String(data.buyerName || 'Student'),
+            buyerAvatarGradient: String(
+              data.buyerAvatarGradient || 'from-[#00E5FF] to-[#7B3FE4]'
+            ),
+            buyerInitials: String(data.buyerInitials || 'ST'),
+            sellerId: String(data.sellerId || data.sellerUid || 'student-a'),
+            sellerName: String(data.sellerName || 'Jaimin & Aarush (Student A)'),
+            message: String(data.message || ''),
+            timestamp: formatTimestampLabel(data.createdAt, 'Just now'),
+            createdAt: createdMillis,
+            status: data.status || 'Pending',
+          });
+        });
+
+        setRequests(() => {
+          const map = new Map<string, BuyRequest>();
+          INITIAL_REQUESTS.forEach((r) => map.set(r.id, r));
+          cloudReqs.forEach((r) => map.set(r.id, r));
+          return Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+        });
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'requests');
+      }
+    );
+
+    // Conversations Listener
+    const convQuery = query(
+      collection(db, 'conversations'),
+      where('isPublic', '==', true)
+    );
+    const unsubConvs = onSnapshot(
+      convQuery,
+      (snapshot) => {
+        const cloudConvs: Conversation[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          cloudConvs.push({
+            id: docSnap.id,
+            bookId: String(data.bookId || 'book-1'),
+            bookTitle: String(data.bookTitle || ''),
+            bookPrice: Number(data.bookPrice) || 250,
+            bookCondition: data.bookCondition || 'Good',
+            bookCover: String(data.bookCover || ''),
+            participantIds: [
+              String(data.ownerUid || 'student-a'),
+              String(data.otherStudentId || 'student-b'),
+            ],
+            otherStudentId: String(data.otherStudentId || 'student-b'),
+            otherStudentName: String(data.otherStudentName || 'Student B'),
+            otherStudentClass: String(data.otherStudentClass || 'Class 11 • CBSE'),
+            otherStudentAvatarGradient: String(
+              data.otherStudentAvatarGradient || 'from-[#00E5FF] to-[#7B3FE4]'
+            ),
+            otherStudentInitials: String(data.otherStudentInitials || 'SB'),
+            otherStudentOnline: true,
+            lastMessage: String(data.lastMessage || ''),
+            lastTimestamp: String(data.lastTimestamp || 'Just now'),
+            unreadCount: Number(data.unreadCount) || 0,
+          });
+        });
+
+        setConversations(() => {
+          const map = new Map<string, Conversation>();
+          INITIAL_CONVERSATIONS.forEach((c) => map.set(c.id, c));
+          cloudConvs.forEach((c) => map.set(c.id, c));
+          return Array.from(map.values());
+        });
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'conversations');
+      }
+    );
+
+    return () => {
+      unsubBooks();
+      unsubReqs();
+      unsubConvs();
+    };
+  }, [authReady]);
+
+  // 3. Real-time Firestore Subcollection Listener for Active Conversation Messages
+  useEffect(() => {
+    if (!authReady || !activeConversationId) return;
+
+    const msgsPath = `conversations/${activeConversationId}/messages`;
+    const msgsQuery = query(
+      collection(db, 'conversations', activeConversationId, 'messages'),
+      where('isPublic', '==', true)
+    );
+
+    const unsubMsgs = onSnapshot(
+      msgsQuery,
+      (snapshot) => {
+        if (snapshot.empty) return;
+        const loaded: (ChatMessage & { createdMillis: number })[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const createdMillis =
+            data.createdAt instanceof Timestamp
+              ? data.createdAt.toMillis()
+              : Date.now();
+          loaded.push({
+            id: docSnap.id,
+            conversationId: activeConversationId,
+            senderId: String(data.senderId || data.senderUid || 'student-a'),
+            text: String(data.text || ''),
+            timestamp: String(data.timestamp || 'Just now'),
+            read: Boolean(data.read),
+            attachedPhoto: data.attachedPhoto ? String(data.attachedPhoto) : undefined,
+            createdMillis,
+          });
+        });
+
+        loaded.sort((a, b) => a.createdMillis - b.createdMillis);
+
+        setMessagesByConv((prev) => {
+          const existing = prev[activeConversationId] || [];
+          const map = new Map<string, ChatMessage>();
+          existing.forEach((m) => map.set(m.id, m));
+          loaded.forEach((m) => map.set(m.id, m));
+          return {
+            ...prev,
+            [activeConversationId]: Array.from(map.values()),
+          };
+        });
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, msgsPath);
+      }
+    );
+
+    return () => unsubMsgs();
+  }, [authReady, activeConversationId]);
+
+  // Helper to ensure initial seed book & conversation exist in Firestore when a signed-in user interacts with them
+  const ensureBookExistsInFirestore = async (book: BookListing, uid: string) => {
+    try {
+      await setDoc(
+        doc(db, 'books', book.id),
+        {
+          ownerUid: uid,
+          sellerId: book.sellerId.replace(/[^a-zA-Z0-9_-]/g, '_'),
+          sellerName: book.sellerName.slice(0, 80),
+          sellerDisplay: book.sellerDisplay.slice(0, 100),
+          title: book.title.slice(0, 150),
+          author: book.author.slice(0, 120),
+          subject: book.subject.slice(0, 60),
+          classGrade: book.classGrade.slice(0, 40),
+          board: book.board.slice(0, 40),
+          medium: book.medium === 'Hindi' ? 'Hindi' : 'English',
+          edition: book.edition.slice(0, 80),
+          condition: book.condition,
+          price: Math.max(1, Math.min(50000, Number(book.price) || 200)),
+          originalPrice: Math.max(1, Math.min(50000, Number(book.originalPrice) || 400)),
+          description: book.description.slice(0, 1000),
+          coverImage: book.coverImage.slice(0, 195000),
+          galleryImages: (book.galleryImages || [book.coverImage])
+            .slice(0, 5)
+            .map((g) => g.slice(0, 195000)),
+          status: book.status,
+          requestsCount: Math.max(0, Number(book.requestsCount) || 0),
+          isPublic: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }
+      );
+    } catch {
+      // Book may already exist in Firestore
+    }
+  };
+
   const selectedBook = useMemo(
     () => books.find((b) => b.id === selectedBookId) || books[0],
     [books, selectedBookId]
@@ -100,7 +440,6 @@ export default function App() {
     [conversations, activeConversationId]
   );
 
-  // Filtered & Sorted Books for Browse
   const filteredBooks = useMemo(() => {
     return books
       .filter((b) => {
@@ -140,10 +479,32 @@ export default function App() {
   const pendingRequestsCount = useMemo(
     () =>
       requests.filter(
-        (r) => r.sellerId === currentUser.id && r.status === 'Pending'
+        (r) =>
+          (r.sellerId === currentUser.id || r.sellerId === 'student-a') &&
+          r.status === 'Pending'
       ).length,
     [requests, currentUser.id]
   );
+
+  const handleGoogleSignIn = async () => {
+    try {
+      await signInWithGoogle();
+      showToast('Signed in with Google! Live Firebase Cloud Sync enabled.');
+    } catch (err) {
+      console.error('Google Sign-In error:', err);
+      showToast('Google Sign-In popup closed or blocked.');
+    }
+  };
+
+  const handleGoogleSignOut = async () => {
+    try {
+      await signOutUser();
+      setCurrentUserId('student-a');
+      showToast('Signed out of Google account. Switched to Student A (Demo).');
+    } catch (err) {
+      console.error('Sign-Out error:', err);
+    }
+  };
 
   const handleToggleFavorite = (bookId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -166,52 +527,58 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleSubmitBuyRequest = (
+  const handleSubmitBuyRequest = async (
     book: BookListing,
     buyerName: string,
     messageText: string
   ) => {
+    const reqId = `req-${Date.now()}`;
+    const safeMsg = (messageText || 'Hi, I’m interested in this book. Is it still available?').slice(
+      0,
+      250
+    );
+
     const newReq: BuyRequest = {
-      id: `req-${Date.now()}`,
+      id: reqId,
       bookId: book.id,
       bookTitle: book.title,
       bookCover: book.coverImage,
       bookPrice: book.price,
       bookCondition: book.condition,
       buyerId: currentUser.id,
-      buyerName,
+      buyerName: buyerName.slice(0, 100),
       buyerAvatarGradient: currentUser.avatarGradient,
       buyerInitials: currentUser.initials,
       sellerId: book.sellerId,
       sellerName: book.sellerDisplay,
-      message: messageText,
+      message: safeMsg,
       timestamp: 'Just now',
       createdAt: Date.now(),
       status: 'Pending',
     };
 
     setRequests((prev) => [newReq, ...prev]);
-
-    // Increment book requests count
     setBooks((prev) =>
       prev.map((b) =>
         b.id === book.id ? { ...b, requestsCount: b.requestsCount + 1 } : b
       )
     );
 
-    // Ensure conversation & initial chat message exist
-    const existingConv = conversations.find((c) => c.bookId === book.id);
     const nowTime = new Date().toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
     });
+
+    const existingConv = conversations.find((c) => c.bookId === book.id);
+    const targetConvId = existingConv ? existingConv.id : `conv-${Date.now()}`;
+    const sellerUser = usersMap[book.sellerId] || DEMO_USERS['student-a'];
 
     if (existingConv) {
       const newMsg: ChatMessage = {
         id: `m-${Date.now()}`,
         conversationId: existingConv.id,
         senderId: currentUser.id,
-        text: `📘 Buy Request Sent: ${messageText}`,
+        text: `📘 Buy Request Sent: ${safeMsg}`,
         timestamp: nowTime,
         read: true,
       };
@@ -222,16 +589,14 @@ export default function App() {
       setConversations((prev) =>
         prev.map((c) =>
           c.id === existingConv.id
-            ? { ...c, lastMessage: messageText, lastTimestamp: 'Just now' }
+            ? { ...c, lastMessage: safeMsg, lastTimestamp: 'Just now' }
             : c
         )
       );
       setActiveConversationId(existingConv.id);
     } else {
-      const sellerUser = usersMap[book.sellerId] || DEMO_USERS['student-a'];
-      const newConvId = `conv-${Date.now()}`;
       const newConv: Conversation = {
-        id: newConvId,
+        id: targetConvId,
         bookId: book.id,
         bookTitle: book.title,
         bookPrice: book.price,
@@ -244,28 +609,93 @@ export default function App() {
         otherStudentAvatarGradient: sellerUser.avatarGradient,
         otherStudentInitials: sellerUser.initials,
         otherStudentOnline: true,
-        lastMessage: messageText,
+        lastMessage: safeMsg,
         lastTimestamp: 'Just now',
         unreadCount: 0,
       };
       const firstMsg: ChatMessage = {
         id: `m-${Date.now()}`,
-        conversationId: newConvId,
+        conversationId: targetConvId,
         senderId: currentUser.id,
-        text: messageText,
+        text: safeMsg,
         timestamp: nowTime,
         read: true,
       };
       setConversations((prev) => [newConv, ...prev]);
-      setMessagesByConv((prev) => ({ ...prev, [newConvId]: [firstMsg] }));
-      setActiveConversationId(newConvId);
+      setMessagesByConv((prev) => ({ ...prev, [targetConvId]: [firstMsg] }));
+      setActiveConversationId(targetConvId);
     }
 
     setRequestModalBook(null);
     showToast('Buy request sent successfully.');
+
+    // Persist to Firestore if authenticated
+    if (auth.currentUser) {
+      const uid = auth.currentUser.uid;
+      try {
+        await ensureBookExistsInFirestore(book, uid);
+        await setDoc(doc(db, 'requests', reqId), {
+          bookId: book.id.replace(/[^a-zA-Z0-9_-]/g, '_'),
+          bookTitle: book.title.slice(0, 150),
+          bookCover: book.coverImage.slice(0, 195000),
+          bookPrice: Math.max(1, Math.min(50000, Number(book.price) || 200)),
+          bookCondition: book.condition,
+          buyerUid: uid,
+          buyerId: currentUser.id.replace(/[^a-zA-Z0-9_-]/g, '_'),
+          buyerName: buyerName.slice(0, 100),
+          buyerAvatarGradient: currentUser.avatarGradient.slice(0, 100),
+          buyerInitials: currentUser.initials.slice(0, 6),
+          sellerUid: uid,
+          sellerId: book.sellerId.replace(/[^a-zA-Z0-9_-]/g, '_'),
+          sellerName: book.sellerDisplay.slice(0, 100),
+          message: safeMsg,
+          status: 'Pending',
+          isPublic: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        await setDoc(doc(db, 'conversations', targetConvId), {
+          bookId: book.id.replace(/[^a-zA-Z0-9_-]/g, '_'),
+          bookTitle: book.title.slice(0, 150),
+          bookPrice: Math.max(1, Math.min(50000, Number(book.price) || 200)),
+          bookCondition: book.condition,
+          bookCover: book.coverImage.slice(0, 195000),
+          ownerUid: uid,
+          otherStudentId: sellerUser.id.replace(/[^a-zA-Z0-9_-]/g, '_'),
+          otherStudentName: sellerUser.displayName.slice(0, 100),
+          otherStudentClass: `${sellerUser.classGrade} • ${sellerUser.board}`.slice(0, 60),
+          otherStudentAvatarGradient: sellerUser.avatarGradient.slice(0, 100),
+          otherStudentInitials: sellerUser.initials.slice(0, 6),
+          lastMessage: safeMsg.slice(0, 500),
+          lastTimestamp: nowTime.slice(0, 40),
+          unreadCount: 0,
+          isPublic: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        const msgDocId = `m-${Date.now()}`;
+        await setDoc(
+          doc(db, 'conversations', targetConvId, 'messages', msgDocId),
+          {
+            conversationId: targetConvId,
+            senderUid: uid,
+            senderId: currentUser.id.replace(/[^a-zA-Z0-9_-]/g, '_'),
+            text: `📘 Buy Request Sent: ${safeMsg}`.slice(0, 500),
+            timestamp: nowTime.slice(0, 40),
+            read: true,
+            isPublic: true,
+            createdAt: serverTimestamp(),
+          }
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `requests/${reqId}`);
+      }
+    }
   };
 
-  const handleOpenChatForBook = (book: BookListing) => {
+  const handleOpenChatForBook = async (book: BookListing) => {
     const existingConv = conversations.find((c) => c.bookId === book.id);
     if (existingConv) {
       setActiveConversationId(existingConv.id);
@@ -278,6 +708,7 @@ export default function App() {
 
     const sellerUser = usersMap[book.sellerId] || DEMO_USERS['student-b'];
     const newConvId = `conv-${Date.now()}`;
+    const firstText = `Hi! I'm interested in your listing "${book.title}" (₹${book.price}). Is it available for exchange at school?`;
     const newConv: Conversation = {
       id: newConvId,
       bookId: book.id,
@@ -292,7 +723,7 @@ export default function App() {
       otherStudentAvatarGradient: sellerUser.avatarGradient,
       otherStudentInitials: sellerUser.initials,
       otherStudentOnline: true,
-      lastMessage: `Started a conversation about ${book.title}`,
+      lastMessage: firstText,
       lastTimestamp: 'Just now',
       unreadCount: 0,
     };
@@ -301,7 +732,7 @@ export default function App() {
       id: `m-${Date.now()}`,
       conversationId: newConvId,
       senderId: currentUser.id,
-      text: `Hi! I'm interested in your listing "${book.title}" (₹${book.price}). Is it available for exchange at school?`,
+      text: firstText,
       timestamp: 'Just now',
       read: true,
     };
@@ -310,9 +741,37 @@ export default function App() {
     setMessagesByConv((prev) => ({ ...prev, [newConvId]: [initialMsg] }));
     setActiveConversationId(newConvId);
     setActiveScreen('chat');
+
+    if (auth.currentUser) {
+      const uid = auth.currentUser.uid;
+      try {
+        await ensureBookExistsInFirestore(book, uid);
+        await setDoc(doc(db, 'conversations', newConvId), {
+          bookId: book.id.replace(/[^a-zA-Z0-9_-]/g, '_'),
+          bookTitle: book.title.slice(0, 150),
+          bookPrice: Math.max(1, Math.min(50000, Number(book.price) || 200)),
+          bookCondition: book.condition,
+          bookCover: book.coverImage.slice(0, 195000),
+          ownerUid: uid,
+          otherStudentId: sellerUser.id.replace(/[^a-zA-Z0-9_-]/g, '_'),
+          otherStudentName: sellerUser.displayName.slice(0, 100),
+          otherStudentClass: `${sellerUser.classGrade} • ${sellerUser.board}`.slice(0, 60),
+          otherStudentAvatarGradient: sellerUser.avatarGradient.slice(0, 100),
+          otherStudentInitials: sellerUser.initials.slice(0, 6),
+          lastMessage: firstText.slice(0, 500),
+          lastTimestamp: 'Just now',
+          unreadCount: 0,
+          isPublic: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `conversations/${newConvId}`);
+      }
+    }
   };
 
-  const handleSendMessage = (
+  const handleSendMessage = async (
     text: string,
     attachedPhoto?: string,
     isLocationPin?: boolean
@@ -322,12 +781,14 @@ export default function App() {
       hour: '2-digit',
       minute: '2-digit',
     });
+    const msgId = `m-${Date.now()}`;
+    const safeText = text.slice(0, 500);
 
     const newMsg: ChatMessage = {
-      id: `m-${Date.now()}`,
+      id: msgId,
       conversationId: activeConversation.id,
       senderId: currentUser.id,
-      text,
+      text: safeText,
       timestamp: nowTime,
       read: true,
       attachedPhoto,
@@ -342,27 +803,92 @@ export default function App() {
     setConversations((prev) =>
       prev.map((c) =>
         c.id === activeConversation.id
-          ? { ...c, lastMessage: text, lastTimestamp: nowTime, unreadCount: 0 }
+          ? { ...c, lastMessage: safeText, lastTimestamp: nowTime, unreadCount: 0 }
           : c
       )
     );
+
+    if (auth.currentUser) {
+      const uid = auth.currentUser.uid;
+      const convId = activeConversation.id;
+      const linkedBook =
+        books.find((b) => b.id === activeConversation.bookId) || books[0];
+      try {
+        await ensureBookExistsInFirestore(linkedBook, uid);
+        await setDoc(
+          doc(db, 'conversations', convId),
+          {
+            bookId: activeConversation.bookId.replace(/[^a-zA-Z0-9_-]/g, '_'),
+            bookTitle: activeConversation.bookTitle.slice(0, 150),
+            bookPrice: Math.max(
+              1,
+              Math.min(50000, Number(activeConversation.bookPrice) || 250)
+            ),
+            bookCondition: activeConversation.bookCondition,
+            bookCover: activeConversation.bookCover.slice(0, 195000),
+            ownerUid: uid,
+            otherStudentId: activeConversation.otherStudentId.replace(
+              /[^a-zA-Z0-9_-]/g,
+              '_'
+            ),
+            otherStudentName: activeConversation.otherStudentName.slice(0, 100),
+            otherStudentClass: activeConversation.otherStudentClass.slice(0, 60),
+            otherStudentAvatarGradient:
+              activeConversation.otherStudentAvatarGradient.slice(0, 100),
+            otherStudentInitials: activeConversation.otherStudentInitials.slice(0, 6),
+            lastMessage: safeText,
+            lastTimestamp: nowTime.slice(0, 40),
+            unreadCount: 0,
+            isPublic: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }
+        );
+
+        const msgPayload: Record<string, unknown> = {
+          conversationId: convId,
+          senderUid: uid,
+          senderId: currentUser.id.replace(/[^a-zA-Z0-9_-]/g, '_'),
+          text: safeText,
+          timestamp: nowTime.slice(0, 40),
+          read: true,
+          isPublic: true,
+          createdAt: serverTimestamp(),
+        };
+        if (attachedPhoto) {
+          msgPayload.attachedPhoto = attachedPhoto.slice(0, 195000);
+        }
+
+        await setDoc(
+          doc(db, 'conversations', convId, 'messages', msgId),
+          msgPayload
+        );
+      } catch (err) {
+        handleFirestoreError(
+          err,
+          OperationType.CREATE,
+          `conversations/${convId}/messages/${msgId}`
+        );
+      }
+    }
   };
 
-  const handleSimulatePartnerReply = () => {
+  const handleSimulatePartnerReply = async () => {
     if (!activeConversation) return;
     const replies = [
       `Sounds great! Let's meet near the school library counter at 4:00 PM to check "${activeConversation.bookTitle}".`,
       `Yes, all chapters and diagrams are completely clean! You can inspect the book before paying ₹${activeConversation.bookPrice}.`,
       `Perfect! I will keep the textbook in my school bag tomorrow morning.`,
     ];
-    const randomReply = replies[Math.floor(Math.random() * replies.length)];
+    const randomReply = replies[Math.floor(Math.random() * replies.length)].slice(0, 500);
     const nowTime = new Date().toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
     });
+    const msgId = `m-${Date.now()}`;
 
     const replyMsg: ChatMessage = {
-      id: `m-${Date.now()}`,
+      id: msgId,
       conversationId: activeConversation.id,
       senderId: activeConversation.otherStudentId,
       text: randomReply,
@@ -382,9 +908,65 @@ export default function App() {
           : c
       )
     );
+
+    if (auth.currentUser) {
+      const uid = auth.currentUser.uid;
+      const convId = activeConversation.id;
+      const linkedBook =
+        books.find((b) => b.id === activeConversation.bookId) || books[0];
+      try {
+        await ensureBookExistsInFirestore(linkedBook, uid);
+        await setDoc(doc(db, 'conversations', convId), {
+          bookId: activeConversation.bookId.replace(/[^a-zA-Z0-9_-]/g, '_'),
+          bookTitle: activeConversation.bookTitle.slice(0, 150),
+          bookPrice: Math.max(
+            1,
+            Math.min(50000, Number(activeConversation.bookPrice) || 250)
+          ),
+          bookCondition: activeConversation.bookCondition,
+          bookCover: activeConversation.bookCover.slice(0, 195000),
+          ownerUid: uid,
+          otherStudentId: activeConversation.otherStudentId.replace(
+            /[^a-zA-Z0-9_-]/g,
+            '_'
+          ),
+          otherStudentName: activeConversation.otherStudentName.slice(0, 100),
+          otherStudentClass: activeConversation.otherStudentClass.slice(0, 60),
+          otherStudentAvatarGradient:
+            activeConversation.otherStudentAvatarGradient.slice(0, 100),
+          otherStudentInitials: activeConversation.otherStudentInitials.slice(0, 6),
+          lastMessage: randomReply,
+          lastTimestamp: nowTime.slice(0, 40),
+          unreadCount: 0,
+          isPublic: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        await setDoc(
+          doc(db, 'conversations', convId, 'messages', msgId),
+          {
+            conversationId: convId,
+            senderUid: uid,
+            senderId: activeConversation.otherStudentId.replace(/[^a-zA-Z0-9_-]/g, '_'),
+            text: randomReply,
+            timestamp: nowTime.slice(0, 40),
+            read: true,
+            isPublic: true,
+            createdAt: serverTimestamp(),
+          }
+        );
+      } catch (err) {
+        handleFirestoreError(
+          err,
+          OperationType.CREATE,
+          `conversations/${convId}/messages/${msgId}`
+        );
+      }
+    }
   };
 
-  const handleSaveBookListing = (
+  const handleSaveBookListing = async (
     bookData: Omit<
       BookListing,
       | 'id'
@@ -398,6 +980,23 @@ export default function App() {
     >,
     existingId?: string
   ) => {
+    const bookId = existingId || `book-${Date.now()}`;
+    const sellerShort = currentUser.shortRole.replace(' (Demo)', '').slice(0, 80);
+
+    const updatedOrNewBook: BookListing = {
+      ...bookData,
+      id: bookId,
+      sellerId: currentUser.id,
+      sellerName: sellerShort,
+      sellerDisplay: currentUser.displayName,
+      postedTime: 'Just now',
+      createdAt: Date.now(),
+      status: 'Available',
+      requestsCount: existingId
+        ? books.find((b) => b.id === existingId)?.requestsCount || 0
+        : 0,
+    };
+
     if (existingId) {
       setBooks((prev) =>
         prev.map((b) => (b.id === existingId ? { ...b, ...bookData } : b))
@@ -406,50 +1005,128 @@ export default function App() {
       setSelectedBookId(existingId);
       setActiveScreen('book-details');
       showToast('Book listing updated successfully.');
-      return;
+    } else {
+      setBooks((prev) => [updatedOrNewBook, ...prev]);
+      setSelectedBookId(bookId);
+      setActiveScreen('book-details');
+      showToast('Listing published to My Book Buddy!');
     }
 
-    const newBook: BookListing = {
-      ...bookData,
-      id: `book-${Date.now()}`,
-      sellerId: currentUser.id,
-      sellerName: currentUser.shortRole.replace(' (Demo)', ''),
-      sellerDisplay: currentUser.displayName,
-      postedTime: 'Just now',
-      createdAt: Date.now(),
-      status: 'Available',
-      requestsCount: 0,
-    };
-
-    setBooks((prev) => [newBook, ...prev]);
-    setSelectedBookId(newBook.id);
-    setActiveScreen('book-details');
-    showToast('Listing published to My Book Buddy!');
+    if (auth.currentUser) {
+      const uid = auth.currentUser.uid;
+      try {
+        await setDoc(doc(db, 'books', bookId), {
+          ownerUid: uid,
+          sellerId: currentUser.id.replace(/[^a-zA-Z0-9_-]/g, '_'),
+          sellerName: sellerShort,
+          sellerDisplay: currentUser.displayName.slice(0, 100),
+          title: bookData.title.slice(0, 150),
+          author: bookData.author.slice(0, 120),
+          subject: bookData.subject.slice(0, 60),
+          classGrade: bookData.classGrade.slice(0, 40),
+          board: bookData.board.slice(0, 40),
+          medium: bookData.medium === 'Hindi' ? 'Hindi' : 'English',
+          edition: bookData.edition.slice(0, 80),
+          condition: bookData.condition,
+          price: Math.max(1, Math.min(50000, Number(bookData.price) || 200)),
+          originalPrice: Math.max(
+            1,
+            Math.min(50000, Number(bookData.originalPrice) || 400)
+          ),
+          description: bookData.description.slice(0, 1000),
+          coverImage: bookData.coverImage.slice(0, 195000),
+          galleryImages: (bookData.galleryImages || [bookData.coverImage])
+            .slice(0, 5)
+            .map((g) => g.slice(0, 195000)),
+          status: 'Available',
+          requestsCount: updatedOrNewBook.requestsCount,
+          isPublic: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `books/${bookId}`);
+      }
+    }
   };
 
-  const handleToggleSoldStatus = (bookId: string) => {
+  const handleToggleSoldStatus = async (bookId: string) => {
+    const target = books.find((b) => b.id === bookId);
+    if (!target) return;
+    const nextStatus = target.status === 'Available' ? 'Sold' : 'Available';
+
     setBooks((prev) =>
-      prev.map((b) => {
-        if (b.id !== bookId) return b;
-        const nextStatus = b.status === 'Available' ? 'Sold' : 'Available';
-        showToast(
-          nextStatus === 'Sold'
-            ? `"${b.title}" marked as Sold!`
-            : `"${b.title}" relisted as Available!`
-        );
-        return { ...b, status: nextStatus };
-      })
+      prev.map((b) => (b.id === bookId ? { ...b, status: nextStatus } : b))
     );
+
+    showToast(
+      nextStatus === 'Sold'
+        ? `"${target.title}" marked as Sold!`
+        : `"${target.title}" relisted as Available!`
+    );
+
+    if (auth.currentUser) {
+      try {
+        await ensureBookExistsInFirestore(target, auth.currentUser.uid);
+        await updateDoc(doc(db, 'books', bookId), {
+          status: nextStatus,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `books/${bookId}`);
+      }
+    }
   };
 
-  const handleUpdateRequestStatus = (
+  const handleUpdateRequestStatus = async (
     requestId: string,
     newStatus: 'Accepted' | 'Declined' | 'Completed'
   ) => {
+    const targetReq = requests.find((r) => r.id === requestId);
+    if (!targetReq) return;
+
     setRequests((prev) =>
       prev.map((r) => (r.id === requestId ? { ...r, status: newStatus } : r))
     );
     showToast(`Buy request marked as ${newStatus}.`);
+
+    if (auth.currentUser) {
+      try {
+        await updateDoc(doc(db, 'requests', requestId), {
+          status: newStatus,
+          updatedAt: serverTimestamp(),
+        });
+      } catch {
+        // Request may have been a local demo seed request; create it in Firestore
+        const uid = auth.currentUser.uid;
+        const linkedBook = books.find((b) => b.id === targetReq.bookId) || books[0];
+        try {
+          await ensureBookExistsInFirestore(linkedBook, uid);
+          await setDoc(doc(db, 'requests', requestId), {
+            bookId: targetReq.bookId.replace(/[^a-zA-Z0-9_-]/g, '_'),
+            bookTitle: targetReq.bookTitle.slice(0, 150),
+            bookCover: targetReq.bookCover.slice(0, 195000),
+            bookPrice: Math.max(1, Math.min(50000, Number(targetReq.bookPrice) || 200)),
+            bookCondition: targetReq.bookCondition,
+            buyerUid: uid,
+            buyerId: targetReq.buyerId.replace(/[^a-zA-Z0-9_-]/g, '_'),
+            buyerName: targetReq.buyerName.slice(0, 100),
+            buyerAvatarGradient: targetReq.buyerAvatarGradient.slice(0, 100),
+            buyerInitials: targetReq.buyerInitials.slice(0, 6),
+            sellerUid: uid,
+            sellerId: targetReq.sellerId.replace(/[^a-zA-Z0-9_-]/g, '_'),
+            sellerName: targetReq.sellerName.slice(0, 100),
+            message: targetReq.message.slice(0, 250),
+            status: newStatus,
+            isPublic: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, `requests/${requestId}`);
+        }
+      }
+    }
   };
 
   const handleOpenChatFromRequest = (req: BuyRequest) => {
@@ -499,7 +1176,6 @@ export default function App() {
     setActiveScreen(TOUR_STEPS[prevIdx].screen);
   };
 
-  // Container width classes when user previews Mobile or Tablet screen sizes
   const viewportContainerClass =
     viewportMode === 'mobile'
       ? 'max-w-[412px] mx-auto border-x border-white/15 min-h-screen shadow-[0_0_80px_rgba(123,63,228,0.3)] bg-[#070A18]'
@@ -510,7 +1186,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#050711] text-white">
       <div className={viewportContainerClass}>
-        {/* Top Navigation */}
         <TopNav
           activeScreen={activeScreen}
           onNavigate={handleNavigate}
@@ -523,9 +1198,10 @@ export default function App() {
           onOpenMenu={() => setIsMenuOpen(true)}
           viewportMode={viewportMode}
           onChangeViewportMode={setViewportMode}
+          isGoogleSignedIn={Boolean(firebaseUser)}
+          onGoogleSignIn={handleGoogleSignIn}
         />
 
-        {/* Science Fair Guided Tour Banner */}
         <DemoTourBanner
           tourStep={tourStep}
           onNextStep={handleNextTourStep}
@@ -533,7 +1209,6 @@ export default function App() {
           onEndTour={() => setTourStep(null)}
         />
 
-        {/* Side Navigation Drawer */}
         <SideDrawer
           isOpen={isMenuOpen}
           onClose={() => setIsMenuOpen(false)}
@@ -546,7 +1221,6 @@ export default function App() {
           pendingRequestsCount={pendingRequestsCount}
         />
 
-        {/* Main Screen Container */}
         <main className="max-w-7xl mx-auto px-3.5 sm:px-6 pt-5 pb-20">
           {activeScreen === 'home' && (
             <HomeView
@@ -671,7 +1345,10 @@ export default function App() {
               requests={requests}
               onNavigate={handleNavigate}
               onSwitchUser={handleSwitchUser}
-              onUpdateProfileName={(newName, newClass, newSchool) => {
+              isGoogleSignedIn={Boolean(firebaseUser)}
+              onGoogleSignIn={handleGoogleSignIn}
+              onGoogleSignOut={handleGoogleSignOut}
+              onUpdateProfileName={async (newName, newClass, newSchool) => {
                 setUsersMap((prev) => ({
                   ...prev,
                   [currentUser.id]: {
@@ -682,6 +1359,23 @@ export default function App() {
                   },
                 }));
                 showToast('Student profile updated!');
+
+                if (auth.currentUser && currentUser.id === auth.currentUser.uid) {
+                  try {
+                    await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+                      displayName: newName.slice(0, 100),
+                      classGrade: newClass.slice(0, 40),
+                      school: newSchool.slice(0, 120),
+                      updatedAt: serverTimestamp(),
+                    });
+                  } catch (err) {
+                    handleFirestoreError(
+                      err,
+                      OperationType.UPDATE,
+                      `users/${auth.currentUser.uid}`
+                    );
+                  }
+                }
               }}
             />
           )}
@@ -698,7 +1392,6 @@ export default function App() {
           {activeScreen === 'trust' && <TrustSafetyView />}
         </main>
 
-        {/* Bottom Navigation Bar (Mobile or forced Mobile preview) */}
         <BottomNav
           activeScreen={activeScreen}
           onNavigate={handleNavigate}
@@ -706,7 +1399,6 @@ export default function App() {
           forceShow={viewportMode === 'mobile'}
         />
 
-        {/* Modals & Toast */}
         <RequestToBuyModal
           book={requestModalBook}
           currentUser={currentUser}
@@ -725,9 +1417,23 @@ export default function App() {
         <ReportModal
           bookTitle={reportBookTitle}
           onClose={() => setReportBookTitle(null)}
-          onReported={() =>
-            showToast('Thank you. Listing reported to student moderators.')
-          }
+          onReported={async () => {
+            showToast('Thank you. Listing reported to student moderators.');
+            if (auth.currentUser && reportBookTitle) {
+              const repId = `rep-${Date.now()}`;
+              try {
+                await setDoc(doc(db, 'reports', repId), {
+                  bookTitle: reportBookTitle.slice(0, 150),
+                  reporterUid: auth.currentUser.uid,
+                  reason: 'Reported via Book Details',
+                  notes: 'Submitted for moderator review',
+                  createdAt: serverTimestamp(),
+                });
+              } catch (err) {
+                handleFirestoreError(err, OperationType.CREATE, `reports/${repId}`);
+              }
+            }
+          }}
         />
 
         <ToastNotification

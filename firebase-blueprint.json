@@ -1,0 +1,522 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public student profile information without sensitive PII.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "classGrade": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "board": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "school": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "avatarGradient": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "initials": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 6
+        },
+        "memberSince": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "classGrade",
+        "board",
+        "school",
+        "avatarGradient",
+        "initials",
+        "memberSince",
+        "updatedAt"
+      ]
+    },
+    "BookListing": {
+      "title": "BookListing",
+      "description": "Used school textbook listing created by a student.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sellerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sellerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "sellerDisplay": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "classGrade": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "board": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "medium": {
+          "type": "string",
+          "enum": ["English", "Hindi"]
+        },
+        "edition": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "condition": {
+          "type": "string",
+          "enum": ["Like New", "Good", "Used", "Heavily Used"]
+        },
+        "price": {
+          "type": "number"
+        },
+        "originalPrice": {
+          "type": "number"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "coverImage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200000
+        },
+        "galleryImages": {
+          "type": "array"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Available", "Sold"]
+        },
+        "requestsCount": {
+          "type": "number"
+        },
+        "isPublic": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerUid",
+        "sellerId",
+        "sellerName",
+        "sellerDisplay",
+        "title",
+        "author",
+        "subject",
+        "classGrade",
+        "board",
+        "medium",
+        "edition",
+        "condition",
+        "price",
+        "originalPrice",
+        "description",
+        "coverImage",
+        "galleryImages",
+        "status",
+        "requestsCount",
+        "isPublic",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "BuyRequest": {
+      "title": "BuyRequest",
+      "description": "Student request to buy a listed school textbook.",
+      "type": "object",
+      "properties": {
+        "bookId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "bookTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "bookCover": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200000
+        },
+        "bookPrice": {
+          "type": "number"
+        },
+        "bookCondition": {
+          "type": "string",
+          "enum": ["Like New", "Good", "Used", "Heavily Used"]
+        },
+        "buyerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "buyerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "buyerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "buyerAvatarGradient": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "buyerInitials": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 6
+        },
+        "sellerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sellerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sellerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 250
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Accepted", "Declined", "Completed"]
+        },
+        "isPublic": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "bookId",
+        "bookTitle",
+        "bookCover",
+        "bookPrice",
+        "bookCondition",
+        "buyerUid",
+        "buyerId",
+        "buyerName",
+        "buyerAvatarGradient",
+        "buyerInitials",
+        "sellerUid",
+        "sellerId",
+        "sellerName",
+        "message",
+        "status",
+        "isPublic",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Student chat thread linked to a specific book listing.",
+      "type": "object",
+      "properties": {
+        "bookId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "bookTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "bookPrice": {
+          "type": "number"
+        },
+        "bookCondition": {
+          "type": "string",
+          "enum": ["Like New", "Good", "Used", "Heavily Used"]
+        },
+        "bookCover": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200000
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "otherStudentId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "otherStudentName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "otherStudentClass": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "otherStudentAvatarGradient": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "otherStudentInitials": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 6
+        },
+        "lastMessage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "lastTimestamp": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "unreadCount": {
+          "type": "number"
+        },
+        "isPublic": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "bookId",
+        "bookTitle",
+        "bookPrice",
+        "bookCondition",
+        "bookCover",
+        "ownerUid",
+        "otherStudentId",
+        "otherStudentName",
+        "otherStudentClass",
+        "otherStudentAvatarGradient",
+        "otherStudentInitials",
+        "lastMessage",
+        "lastTimestamp",
+        "unreadCount",
+        "isPublic",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Individual message inside a student book conversation.",
+      "type": "object",
+      "properties": {
+        "conversationId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "senderUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "senderId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "attachedPhoto": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "isPublic": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "conversationId",
+        "senderUid",
+        "senderId",
+        "text",
+        "timestamp",
+        "read",
+        "isPublic",
+        "createdAt"
+      ]
+    },
+    "BookReport": {
+      "title": "BookReport",
+      "description": "Moderation report submitted for a book listing.",
+      "type": "object",
+      "properties": {
+        "bookTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "reporterUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "bookTitle",
+        "reporterUid",
+        "reason",
+        "notes",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Public student profile documents without PII."
+    },
+    "/books/{bookId}": {
+      "schema": { "$ref": "#/entities/BookListing" },
+      "description": "Marketplace book listings."
+    },
+    "/requests/{requestId}": {
+      "schema": { "$ref": "#/entities/BuyRequest" },
+      "description": "Student buy requests for textbooks."
+    },
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Student book exchange chat threads."
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Messages inside a specific conversation."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/BookReport" },
+      "description": "Student moderation reports on listings."
+    }
+  }
+}

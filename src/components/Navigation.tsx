@@ -35,6 +35,8 @@ interface TopNavProps {
   onOpenMenu: () => void;
   viewportMode: ViewportMode;
   onChangeViewportMode: (mode: ViewportMode) => void;
+  isGoogleSignedIn?: boolean;
+  onGoogleSignIn?: () => void;
 }
 
 export const TopNav: React.FC<TopNavProps> = ({
@@ -49,6 +51,8 @@ export const TopNav: React.FC<TopNavProps> = ({
   onOpenMenu,
   viewportMode,
   onChangeViewportMode,
+  isGoogleSignedIn = false,
+  onGoogleSignIn,
 }) => {
   const navLinks: { id: ScreenId; label: string; badge?: number }[] = [
     { id: 'home', label: 'Home' },
@@ -177,6 +181,16 @@ export const TopNav: React.FC<TopNavProps> = ({
               </span>
             )}
           </button>
+
+          {!isGoogleSignedIn && onGoogleSignIn && (
+            <button
+              type="button"
+              onClick={onGoogleSignIn}
+              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#7B3FE4] to-[#00E5FF] hover:brightness-110 text-white text-xs font-extrabold shadow-[0_0_12px_rgba(0,229,255,0.3)] whitespace-nowrap transition-all"
+            >
+              <span>Sign In</span>
+            </button>
+          )}
 
           <button
             type="button"
